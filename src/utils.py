@@ -1,9 +1,10 @@
-""" Dataloader classes and other utility functions. """
+""" Dataloader classes and other utility classes needed by the Transformer architecture. """
 
 import re
 from typing import Optional, List
 
 import torch
+from torch import nn
 from torch.utils.data import Dataset
 
 from tqdm import tqdm
@@ -19,7 +20,7 @@ class CorpusDataset(Dataset):
             save_path:      Optional[str]  = None,
             word2idx:       Optional[dict] = None,
             idx2word:       Optional[dict] = None
-        ):
+        ) -> None:
         """ Initialize the dataset.
 
         Args:
@@ -66,7 +67,8 @@ class CorpusDataset(Dataset):
 
             if save_path is not None:
                 with open(save_path, 'w', encoding='utf-8') as f:
-                    f.writelines(corpus)
+                    for line in corpus:
+                        f.write(line + '\n')
 
         return corpus
 
@@ -97,7 +99,7 @@ class CorpusDataset(Dataset):
 
         return processed_corpus
 
-    def __build_vocab(self):
+    def __build_vocab(self) -> None:
         """ Build the vocabulary for the corpus. """
         vocab = set()
         for line in self.corpus:
@@ -123,13 +125,226 @@ class CorpusDataset(Dataset):
             idx: Index of the sentence in the corpus.
 
         Returns:
-            Tensor containing the indices of the words in the sentence from the vocabulary.
+            Tensor containing the indices of the words in the sentence from the vocabulary
+            and the original length of the sentence.
         """
         line = self.corpus[idx].split()[:self.seq_len]
 
-        line = ['<BOS>'] + line + ['<EOS>']
+        line     = ['<BOS>'] + line + ['<EOS>']
+        orig_len = len(line)
+
         line += ['<PAD>'] * (self.seq_len + 2 - len(line))
 
         line = [self.word2idx.get(word, self.word2idx['<UNK>']) for word in line]
 
-        return torch.tensor(line)
+        return torch.tensor(line), orig_len
+
+class PositionalEncoding(nn.Module):
+    """ Positional encoding class for the Transformer model. """
+
+    def __init__(self, d_model: int, seq_len: int) -> None:
+        """ Initialize the positional encoding.
+
+        Args:
+            d_model: Dimensionality of the model.
+            seq_len: Sequence length for the model.
+        """
+        super().__init__()
+
+        pos = torch.arange(seq_len).unsqueeze(1)
+        div = torch.exp(torch.arange(0, d_model, 2) * -(torch.log(torch.tensor(10000.0)) / d_model))
+
+        pos_enc = torch.zeros(seq_len, d_model)
+        pos_enc[:, 0::2] = torch.sin(pos.float() * div)
+        pos_enc[:, 1::2] = torch.cos(pos.float() * div)
+
+        self.register_buffer('pos_enc', pos_enc)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """ Forward pass of the positional encoding.
+
+        Args:
+            x: Input tensor of shape (batch_size, seq_len, d_model).
+
+        Returns:
+            Tensor with positional encoding added.
+        """
+        return x + self.pos_enc.unsqueeze(0).to(x.device)
+
+class MultiheadAttention(nn.Module):
+    """ Multihead attention layer for the Transformer model. """
+
+    def __init__(
+            self,
+            d_model: int,
+            n_heads: int,
+        ) -> None:
+        """ Initialize the multihead attention layer.
+
+        Args:
+            d_model: Dimensionality of the model.
+            n_heads: Number of attention heads.
+        """
+        super().__init__()
+        assert d_model % n_heads == 0, "d_model must be divisible by n_heads."
+
+        self.d_model  = d_model
+        self.n_heads  = n_heads
+        self.head_dim = d_model // n_heads
+
+        self.q_linear = nn.Linear(d_model, d_model)
+        self.k_linear = nn.Linear(d_model, d_model)
+        self.v_linear = nn.Linear(d_model, d_model)
+
+        self.out = nn.Linear(d_model, d_model)
+
+    def __scaled_dot_product_attention(
+            self,
+            query: torch.Tensor,
+            key:   torch.Tensor,
+            value: torch.Tensor,
+            mask:  Optional[torch.Tensor] = None
+        ) -> torch.Tensor:
+        """ Scaled dot product attention.
+
+        Args:
+            query: Input query tensor of shape (batch_size, n_heads, seq_len, head_dim).
+            key:   Input key tensor of shape (batch_size, n_heads, seq_len, head_dim).
+            value: Input value tensor of shape (batch_size, n_heads, seq_len, head_dim).
+            mask:  Optional mask tensor of shape (batch_size, seq_len_q, seq_len_k).
+
+        Returns:
+            Output tensor of shape (batch_size, n_heads, seq_len, head_dim).
+        """
+        scores = torch.matmul(query, key.permute(0, 1, 3, 2)) / (self.head_dim ** 0.5)
+
+        if mask is not None:
+            mask   = mask.unsqueeze(1).repeat(1, self.n_heads, 1, 1).bool()
+            scores = scores.masked_fill(mask, float('-inf'))
+
+        softmax_scores = torch.softmax(scores, dim=-1)
+
+        attention = torch.matmul(softmax_scores, value)
+
+        return attention
+
+    def forward(
+            self,
+            query: torch.Tensor,
+            key:   torch.Tensor,
+            value: torch.Tensor,
+            mask:  Optional[torch.Tensor] = None
+        ) -> torch.Tensor:
+        """ Forward pass of the multihead attention layer.
+
+        Args:
+            query: Input query tensor of shape (batch_size, seq_len, d_model).
+            key:   Input key tensor of shape (batch_size, seq_len, d_model).
+            value: Input value tensor of shape (batch_size, seq_len, d_model).
+            mask:  Optional mask tensor of shape (batch_size, seq_len_q, seq_len_k).
+
+        Returns:
+            Output tensor of shape (batch_size, seq_len, d_model).
+        """
+        batch_size = query.shape[0]
+
+        q = self.q_linear(query)
+        k = self.k_linear(key)
+        v = self.v_linear(value)
+
+        q = q.view(batch_size, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        k = k.view(batch_size, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        v = v.view(batch_size, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+
+        x = self.__scaled_dot_product_attention(q, k, v, mask)
+        x = x.permute(0, 2, 1, 3).contiguous().view(batch_size, -1, self.d_model)
+
+        return self.out(x)
+
+def get_padding_mask(
+        orig_lens_k: torch.Tensor,
+        seq_len_k:   int,
+        seq_len_q:   Optional[int] = None
+    ) -> torch.Tensor:
+    """ Create a padding mask.
+
+    Args:
+        orig_lens_k: Original lengths of the keys in the batch.
+        seq_len_q:   Sequence length for the queries.
+        seq_len_k:   Sequence length for the keys.
+
+    Returns:
+        Boolean padding mask tensor of shape (batch_size, seq_len_q, seq_len_k).
+    """
+    if seq_len_q is None:
+        seq_len_q = seq_len_k
+
+    mask = torch.arange(seq_len_k).unsqueeze(0) >= orig_lens_k.unsqueeze(1)
+    mask = mask.unsqueeze(1).repeat(1, seq_len_q, 1)
+
+    return mask.bool()
+
+def get_causal_mask(seq_len: int) -> torch.Tensor:
+    """ Create a causal mask.
+
+    Args:
+        seq_len: Sequence length for the model.
+
+    Returns:
+        Boolean causal mask tensor of shape (seq_len, seq_len).
+    """
+    mask = torch.ones(seq_len, seq_len)
+    mask = torch.tril(mask, diagonal=0)
+
+    return mask.bool()
+
+def get_encoder_mask(orig_lens: torch.Tensor, seq_len: int) -> torch.Tensor:
+    """ Create an encoder mask.
+
+    Args:
+        orig_lens: Original lengths of the keys in the batch.
+        seq_len:   Sequence length for the model.
+
+    Returns:
+        Boolean encoder mask tensor of shape (batch_size, seq_len, seq_len).
+    """
+    return get_padding_mask(orig_lens, seq_len)
+
+def get_decoder_mask(orig_lens: torch.Tensor, seq_len: int) -> torch.Tensor:
+    """ Create a decoder mask.
+
+    Args:
+        orig_lens: Original lengths of the keys in the batch.
+        seq_len:   Sequence length for the model.
+
+    Returns:
+        Boolean decoder mask tensor of shape (batch_size, seq_len, seq_len).
+    """
+    pad_mask    = get_padding_mask(orig_lens, seq_len)
+    causal_mask = get_causal_mask(seq_len)
+
+    return pad_mask | causal_mask
+
+if __name__ == "__main__":
+    corpus_names = [
+        'train.en',
+        'dev.en',
+        'test.en',
+        'train.fr',
+        'dev.fr',
+        'test.fr'
+    ]
+
+    for corpus_name in corpus_names:
+        corpus_file_path = f'corpus/{corpus_name}'
+        corpus_save_path = f'corpus/processed_{corpus_name}'
+
+        CorpusDataset(
+            corpus_file_path,
+            seq_len=None,
+            process_corpus=True,
+            save_path=corpus_save_path
+        )
+
+        print(f'Processed {corpus_name} dataset.')
+        print()
