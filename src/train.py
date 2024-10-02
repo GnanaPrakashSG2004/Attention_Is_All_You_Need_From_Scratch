@@ -236,17 +236,17 @@ def main(args: argparse.Namespace) -> None:
     en_train = CorpusDataset(args.train_en_path, seq_len=args.seq_len)
     fr_train = CorpusDataset(args.train_fr_path, seq_len=args.seq_len)
 
+    enc_seq_len = args.seq_len + 2 if args.seq_len != -1 else en_train.seq_len + 2
+    dec_seq_len = args.seq_len + 1 if args.seq_len != -1 else fr_train.seq_len + 1
+
     train_dataset = TranslationDataset(en_train, fr_train)
     train_loader  = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
-    en_dev = CorpusDataset(args.dev_en_path, seq_len=args.seq_len, word2idx=en_train.word2idx, idx2word=en_train.idx2word)
-    fr_dev = CorpusDataset(args.dev_fr_path, seq_len=args.seq_len, word2idx=fr_train.word2idx, idx2word=fr_train.idx2word)
+    en_dev = CorpusDataset(args.dev_en_path, seq_len=en_train.seq_len, word2idx=en_train.word2idx, idx2word=en_train.idx2word)
+    fr_dev = CorpusDataset(args.dev_fr_path, seq_len=fr_train.seq_len, word2idx=fr_train.word2idx, idx2word=fr_train.idx2word)
 
     dev_dataset = TranslationDataset(en_dev, fr_dev)
     dev_loader  = DataLoader(dev_dataset, batch_size=args.batch_size)
-
-    enc_seq_len = args.seq_len + 2 if args.seq_len != -1 else en_train.seq_len + 2
-    dec_seq_len = args.seq_len + 1 if args.seq_len != -1 else fr_train.seq_len + 1
 
     model = Transformer(
         en_train.vocab_size,
@@ -280,6 +280,8 @@ def main(args: argparse.Namespace) -> None:
         "args":                 args,
         "model_state_dict":     model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
+        "en_seq_len":           en_train.seq_len,
+        "fr_seq_len":           fr_train.seq_len,
         "word2idx_en":          en_train.word2idx,
         "word2idx_fr":          fr_train.word2idx,
         "idx2word_en":          en_train.idx2word,
