@@ -15,7 +15,7 @@ class CorpusDataset(Dataset):
     def __init__(
             self,
             corpus_file:    str,
-            seq_len:        Optional[int],
+            seq_len:        Optional[int] = -1,
             process_corpus: bool = False,
             save_path:      Optional[str]  = None,
             word2idx:       Optional[dict] = None,
@@ -34,7 +34,7 @@ class CorpusDataset(Dataset):
         self.corpus_file = corpus_file
         self.corpus      = self.__load_corpus(process_corpus, save_path)
 
-        if seq_len is not None:
+        if seq_len != -1:
             self.seq_len = seq_len
         else:
             self.seq_len = max(len(line.split()) for line in self.corpus)
@@ -114,6 +114,31 @@ class CorpusDataset(Dataset):
             self.word2idx[token] = len(self.word2idx)
             self.idx2word[len(self.idx2word)] = token
 
+    @property
+    def vocab_size(self) -> int:
+        """ Return the size of the vocabulary. """
+        return len(self.word2idx)
+
+    @property
+    def start_idx(self) -> int:
+        """ Return the index of the start token. """
+        return self.word2idx['<BOS>']
+
+    @property
+    def end_idx(self) -> int:
+        """ Return the index of the end token. """
+        return self.word2idx['<EOS>']
+
+    @property
+    def pad_idx(self) -> int:
+        """ Return the index of the padding token. """
+        return self.word2idx['<PAD>']
+
+    @property
+    def unk_idx(self) -> int:
+        """ Return the index of the unknown token. """
+        return self.word2idx['<UNK>']
+
     def __len__(self) -> int:
         """ Return the length of the dataset. """
         return len(self.corpus)
@@ -133,11 +158,47 @@ class CorpusDataset(Dataset):
         line     = ['<BOS>'] + line + ['<EOS>']
         orig_len = len(line)
 
-        line += ['<PAD>'] * (self.seq_len + 2 - len(line))
+        line += ['<PAD>'] * (self.seq_len + 2 - orig_len)
 
         line = [self.word2idx.get(word, self.word2idx['<UNK>']) for word in line]
 
         return torch.tensor(line), orig_len
+
+class TranslationDataset(Dataset):
+    """ Dataset class for the translation task. """
+
+    def __init__(
+            self,
+            en_corpus: CorpusDataset,
+            fr_corpus: CorpusDataset
+        ) -> None:
+        """ Initialize the dataset.
+
+        Args:
+            en_corpus: English corpus dataset.
+            fr_corpus: French corpus dataset.
+        """
+        self.en_corpus = en_corpus
+        self.fr_corpus = fr_corpus
+
+    def __len__(self) -> int:
+        """ Return the length of the dataset. """
+        return len(self.en_corpus)
+
+    def __getitem__(self, idx: int) -> tuple:
+        """ Get an item from the dataset.
+
+        Args:
+            idx: Index of the sentence in the corpus.
+
+        Returns:
+            Tensors containing the indices of the words in the English and French sentences
+            from the vocabulary and the original lengths of the sentences.
+        """
+        en_line, en_len = self.en_corpus[idx]
+        fr_line, fr_len = self.fr_corpus[idx]
+
+        return (en_line, en_len), (fr_line, fr_len)
 
 class PositionalEncoding(nn.Module):
     """ Positional encoding class for the Transformer model. """
@@ -294,7 +355,7 @@ def get_causal_mask(seq_len: int) -> torch.Tensor:
         Boolean causal mask tensor of shape (seq_len, seq_len).
     """
     mask = torch.ones(seq_len, seq_len)
-    mask = torch.tril(mask, diagonal=0)
+    mask = torch.triu(mask, diagonal=1)
 
     return mask.bool()
 
