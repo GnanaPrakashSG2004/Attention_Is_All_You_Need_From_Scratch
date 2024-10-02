@@ -8,6 +8,8 @@ from torch import nn
 from torch.utils.data import Dataset
 
 from tqdm import tqdm
+from rouge_score import rouge_scorer
+from sacrebleu import corpus_bleu
 
 class CorpusDataset(Dataset):
     """ Dataset class for the corpus. """
@@ -409,3 +411,69 @@ if __name__ == "__main__":
 
         print(f'Processed {corpus_name} dataset.')
         print()
+
+def get_sentence_from_idx(
+        idx:     torch.Tensor,
+        idx2word: dict
+    ) -> str:
+    """ Get the sentence from the indices.
+
+    Args:
+        idx:      Tensor containing the indices of the sentence.
+        idx2word: Dictionary mapping indices to words.
+
+    Returns:
+        Sentence formed from the indices.
+    """
+    words = []
+
+    for i in idx:
+        word = idx2word[i.item()]
+        if word == '<EOS>':
+            break
+        words.append(word)
+
+    return ' '.join(words)
+
+def get_sentence_rouge_score(
+        pred_idx:   torch.Tensor,
+        target_idx: torch.Tensor,
+        idx2word:   dict
+    ) -> float:
+    """ Calculate the ROUGE score for a sentence.
+
+    Args:
+        pred_idx:   Tensor containing the indices of the predicted sentence.
+        target_idx: Tensor containing the indices of the target sentence.
+        idx2word:   Dictionary mapping indices to words.
+
+    Returns:
+        ROUGE score for the sentence.
+    """
+    pred_sentence   = get_sentence_from_idx(pred_idx, idx2word)
+    target_sentence = get_sentence_from_idx(target_idx, idx2word)
+
+    scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
+    scores = scorer.score(target_sentence, pred_sentence)
+
+    return scores['rougeL'].fmeasure
+
+def get_sentence_bleu_score(
+        pred_idx:   torch.Tensor,
+        target_idx: torch.Tensor,
+        idx2word:   dict
+    ) -> float:
+    """ Calculate the BLEU score for a sentence.
+
+    Args:
+        pred_idx:   Tensor containing the indices of the predicted sentence.
+        target_idx: Tensor containing the indices of the target sentence.
+        idx2word:   Dictionary mapping indices to words.
+
+    Returns:
+        BLEU score for the sentence.
+    """
+    pred_sentence   = get_sentence_from_idx(pred_idx, idx2word)
+    target_sentence = get_sentence_from_idx(target_idx, idx2word)
+
+    return corpus_bleu([pred_sentence], [[target_sentence]]).score

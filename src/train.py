@@ -14,7 +14,8 @@ from src.encoder import Encoder
 from src.decoder import Decoder
 from src.utils import (
     CorpusDataset, TranslationDataset,
-    get_padding_mask, get_encoder_mask, get_decoder_mask
+    get_padding_mask, get_encoder_mask, get_decoder_mask,
+    get_sentence_bleu_score, get_sentence_rouge_score
 )
 
 class Transformer(nn.Module):
@@ -160,12 +161,18 @@ def validate(
         num_epochs: Total number of epochs.
 
     Returns:
-        List of losses for each batch per epoch.
+        List of losses for each batch per epoch,
+        List of BLEU scores for each sentence in the validation dataset,
+        List of ROUGE scores for each sentence in the validation dataset.
     """
     model.eval()
 
-    total_loss = 0
-    losses = []
+    total_loss   = 0
+    losses       = []
+    bleu_scores  = []
+    rouge_scores = []
+
+    fr_idx2word = loader.dataset.fr_corpus.idx2word
 
     pbar = tqdm(loader)
 
@@ -192,14 +199,29 @@ def validate(
 
         loss = criterion(out.reshape(-1, out.size(-1)), dec_out.reshape(-1))
 
+        pred_idx = out.argmax(dim=-1)
+
+        batch_bleu_scores  = [get_sentence_bleu_score(pred_idx[i],  dec_out[i], fr_idx2word) for i in range(pred_idx.size(0))]
+        batch_rouge_scores = [get_sentence_rouge_score(pred_idx[i], dec_out[i], fr_idx2word) for i in range(pred_idx.size(0))]
+
+        bleu_scores.extend(batch_bleu_scores)
+        rouge_scores.extend(batch_rouge_scores)
+
         total_loss += loss.item()
         losses.append(loss.item())
 
-        pbar.set_postfix_str(f"Running Avg Loss: {total_loss / (i + 1):.4f}")
+        running_avg_loss = total_loss / (i + 1)
+        batch_avg_bleu   = torch.tensor(batch_bleu_scores).mean().item()
+        batch_avg_rouge  = torch.tensor(batch_rouge_scores).mean().item()
 
-    pbar.set_postfix_str(f"Validation Loss: {total_loss / len(loader):.4f}")
+        pbar.set_postfix_str(f"Running Avg Loss: {running_avg_loss:.4f}, Batch BLEU: {batch_avg_bleu:.4f}, Batch ROUGE: {batch_avg_rouge:.4f}")
 
-    return losses
+    dev_avg_bleu  = torch.tensor(bleu_scores).mean().item()
+    dev_avg_rouge = torch.tensor(rouge_scores).mean().item()
+
+    pbar.set_postfix_str(f"Validation Loss: {total_loss / len(loader):.4f}, Avg BLEU: {dev_avg_bleu:.4f}, Avg ROUGE: {dev_avg_rouge:.4f}")
+
+    return losses, bleu_scores, rouge_scores
 
 def parse_args() -> argparse.Namespace:
     """ Parse command-line arguments. """
@@ -266,13 +288,17 @@ def main(args: argparse.Namespace) -> None:
 
     all_train_losses = []
     all_dev_losses   = []
+    all_dev_bleu     = []
+    all_dev_rouge    = []
 
     for epoch in range(args.epochs):
         train_losses = train(model, optimizer, criterion, train_loader, args.device, epoch, args.epochs)
         all_train_losses.extend(train_losses)
 
-        dev_losses = validate(model, criterion, dev_loader, args.device, epoch, args.epochs)
+        dev_losses, dev_bleu, dev_rouge = validate(model, criterion, dev_loader, args.device, epoch, args.epochs)
         all_dev_losses.extend(dev_losses)
+        all_dev_bleu.extend(dev_bleu)
+        all_dev_rouge.extend(dev_rouge)
 
         print()
 
@@ -287,7 +313,9 @@ def main(args: argparse.Namespace) -> None:
         "idx2word_en":          en_train.idx2word,
         "idx2word_fr":          fr_train.idx2word,
         "train_losses":         all_train_losses,
-        "dev_losses":           all_dev_losses
+        "dev_losses":           all_dev_losses,
+        "dev_bleu":             all_dev_bleu,
+        "dev_rouge":            all_dev_rouge
     }, args.model_path)
 
 if __name__ == "__main__":
