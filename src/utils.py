@@ -38,9 +38,12 @@ class CorpusDataset(Dataset):
         else:
             self.seq_len = max(len(line.split()) for line in self.corpus)
 
-        self.__build_vocab()
-        self.word2idx = word2idx if word2idx is not None else self.word2idx
-        self.idx2word = idx2word if idx2word is not None else self.idx2word
+        if word2idx is None or idx2word is None:
+            self.__build_vocab()
+
+        else:
+            self.word2idx = word2idx if word2idx is not None else self.word2idx
+            self.idx2word = idx2word if idx2word is not None else self.idx2word
 
     def __load_corpus(
             self,
