@@ -42,8 +42,8 @@ class CorpusDataset(Dataset):
             self.__build_vocab()
 
         else:
-            self.word2idx = word2idx if word2idx is not None else self.word2idx
-            self.idx2word = idx2word if idx2word is not None else self.idx2word
+            self.word2idx = word2idx
+            self.idx2word = idx2word
 
     def __load_corpus(
             self,
