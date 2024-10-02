@@ -1,6 +1,6 @@
 """ Training pipeline for the English to French machine translation task using the Transformer model. """
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import argparse
 from tqdm import tqdm
@@ -83,7 +83,7 @@ class Transformer(nn.Module):
 def train(
         model:      Transformer,
         optimizer:  torch.optim.Optimizer,
-        criterion:  nn.Module,
+        criterion:  nn.CrossEntropyLoss,
         loader:     DataLoader,
         device:     torch.device,
         epoch:      int,
@@ -144,12 +144,12 @@ def train(
 @torch.no_grad()
 def validate(
         model:      Transformer,
-        criterion:  nn.Module,
+        criterion:  nn.CrossEntropyLoss,
         loader:     DataLoader,
         device:     torch.device,
         epoch:      Optional[int] = None,
         num_epochs: Optional[int] = None
-    ) -> List[float]:
+    ) -> Tuple[List[float], List[float], List[float]]:
     """ Validation pipeline for the Transformer model.
     
     Args:
@@ -320,4 +320,21 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     train_args = parse_args()
-    main(train_args)
+    # main(train_args)
+
+    num_blocks = [6, 8, 6]
+    num_heads  = [8, 10, 8]
+    model_dims = [512, 640, 640]
+    dropouts   = [0.1, 0.1, 0.2]
+
+    for idx in range(3):
+        train_args.n_blocks = num_blocks[idx]
+        train_args.n_heads  = num_heads[idx]
+        train_args.d_model  = model_dims[idx]
+        train_args.dropout  = dropouts[idx]
+        train_args.seq_len  = 77
+
+        save_path = f"weights/transformer_n_blocks_{num_blocks[idx]}_n_heads_{num_heads[idx]}_d_model_{model_dims[idx]}_dropout_{dropouts[idx]}.pt"
+        train_args.model_path = save_path
+
+        main(train_args)

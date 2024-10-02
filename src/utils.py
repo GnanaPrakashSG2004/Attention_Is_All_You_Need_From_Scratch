@@ -232,7 +232,7 @@ class PositionalEncoding(nn.Module):
         Returns:
             Tensor with positional encoding added.
         """
-        return x + self.pos_enc.unsqueeze(0).to(x.device)
+        return x + self.pos_enc[:x.size(1), :].unsqueeze(0).to(x.device)
 
 class MultiheadAttention(nn.Module):
     """ Multihead attention layer for the Transformer model. """
